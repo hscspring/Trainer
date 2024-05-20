@@ -47,7 +47,8 @@ class WandbLogger(BaseDashboardLogger):
             self.log_dict[step]["{}/{}".format(scope_name, key)] = wandb.Image(value)
 
     def add_audios(self, scope_name, audios, step, sample_rate):
-        for key, value in audios.items():
+        items = sorted(audios.items(), key=lambda x: x[0])
+        for key, value in items:
             if value.dtype == "float16":
                 value = value.astype("float32")
             try:
@@ -87,6 +88,7 @@ class WandbLogger(BaseDashboardLogger):
             self.run.finish()
 
     def add_artifact(self, file_or_dir, name, artifact_type, aliases=None):
+        return
         if not self.run:
             return
         name = "_".join([self.run.id, name])

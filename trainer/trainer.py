@@ -164,7 +164,7 @@ class TrainerConfig(Coqpit):
     # Fields for training specs
     mixed_precision: bool = field(default=False, metadata={"help": "Use mixed precision training. Defaults to False"})
     precision: str = field(
-        default="fp16",
+        default="bf16",
         metadata={
             "help": "Precision to use in mixed precision training. `fp16` for float16 and `bf16` for bfloat16. Defaults to 'f16'"
         },
@@ -632,6 +632,7 @@ class Trainer:
             _precision = "f8"
         elif _precision == "bfloat16":
             _precision = "bf16"
+        print(f"Acc mix_precision: {_precision}, grad_accum_steps: {grad_accum_steps}")
         accelerator = Accelerator(gradient_accumulation_steps=grad_accum_steps, mixed_precision=_precision)
         if isinstance(model, torch.nn.Module):
             model = accelerator.prepare_model(model)
@@ -903,11 +904,13 @@ class Trainer:
                     verbose,
                     num_gpus,
                     self.args.rank,
+                    self.use_accelerate,
                 )
         else:
             if isimplemented(model, "get_data_loader"):
                 loader = model.get_data_loader(
-                    config=config, assets=assets, is_eval=is_eval, samples=samples, verbose=verbose, num_gpus=num_gpus
+                    config=config, assets=assets, is_eval=is_eval, samples=samples, verbose=verbose, num_gpus=num_gpus,
+                    use_accelerate=self.use_accelerate,
                 )
 
         assert (
@@ -937,6 +940,7 @@ class Trainer:
                     verbose,
                     self.num_gpus,
                     self.args.rank,
+                    self.use_accelerate,
                 )
                 return loader
         else:
@@ -946,6 +950,7 @@ class Trainer:
                 )
                 return loader
 
+        # 多GPU这里
         return self._get_loader(
             self.model,
             self.config,
@@ -987,6 +992,7 @@ class Trainer:
                 )
                 return loader
 
+        # 多GPU这里
         return self._get_loader(
             self.model,
             self.config,
@@ -1172,7 +1178,7 @@ class Trainer:
         return grad_clip
 
     def _compute_grad_norm(self, optimizer: torch.optim.Optimizer):
-        return torch.norm(torch.cat([param.grad.view(-1) for param in self.master_params(optimizer)], dim=0), p=2)
+        return torch.norm(torch.cat([param.grad.view(-1) for param in self.master_params(optimizer) if param.grad is not None], dim=0), p=2)
 
     def _grad_clipping(self, grad_clip: float, optimizer: torch.optim.Optimizer, scaler: "AMPScaler"):
         """Perform gradient clipping"""
@@ -1485,7 +1491,9 @@ class Trainer:
                 self.train_samples,
                 verbose=True,
             )
+            print("traindl before ", len(self.train_loader))
             self.train_loader = self.prepare_accelerate_loader(self.train_loader)
+            print("traindl after ", len(self.train_loader))
         # set model to training mode
         torch.set_grad_enabled(True)
         if self.num_gpus > 1:
@@ -1633,6 +1641,7 @@ class Trainer:
                 if self.config.run_eval
                 else None
             )
+            self.eval_loader = self.prepare_accelerate_loader(self.eval_loader)
 
         torch.set_grad_enabled(False)
         self.model.eval()
@@ -1793,6 +1802,7 @@ class Trainer:
                 self.keep_avg_eval.avg_values if self.config.run_eval else self.keep_avg_train.avg_values,
             )
             if self.args.rank in [None, 0]:
+                print(f"Saving model on device: {self.args.rank}")
                 self.save_best_model()
             self.callbacks.on_epoch_end(self)
             self.start_with_eval = False
